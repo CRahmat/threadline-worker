@@ -1,0 +1,1112 @@
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "library"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ProductStatus {
+  DRAFT
+  READY
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum PostStatus {
+  DRAFT
+  QUEUED
+  GENERATING_AI
+  PUBLISHING
+  SUCCESS
+  FAILED
+}
+
+enum PostHistoryType {
+  DRAFT_CREATED
+  DRAFT_UPDATED
+  APPROVED
+  AUTO_RETRY
+  MANUAL_RETRY
+  CANCELLED
+}
+
+enum ContentStatus {
+  DRAFT
+  IN_REVIEW
+  APPROVED
+  ARCHIVED
+}
+
+enum CampaignStatus {
+  DRAFT
+  ALLOCATING
+  ALLOCATED
+  NEEDS_ATTENTION
+  IN_REVIEW
+  SCHEDULED
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum CampaignSlotStatus {
+  EMPTY
+  ALLOCATED
+  CONTENT_DRAFT
+  IN_REVIEW
+  APPROVED
+  QUEUED
+  PUBLISHED
+  FAILED
+  SKIPPED
+}
+
+enum MediaKind {
+  IMAGE
+}
+
+enum AIProvider {
+  GEMINI
+  OPENAI
+  GROQ
+  OPENROUTER
+  DEEPSEEK
+}
+
+enum AppRole {
+  ADMIN
+  USER
+}
+
+enum UserSubscriptionStatus {
+  PENDING
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  EXPIRED
+  CANCELED
+}
+
+enum SubscriptionPaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  EXPIRED
+}
+
+enum SubscriptionPaymentKind {
+  INITIAL
+  RENEWAL
+}
+
+enum SocialProvider {
+  GOOGLE
+  FACEBOOK
+}
+
+enum OrganizationRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum AuditOperation {
+  CREATE
+  UPDATE
+  DELETE
+  APPROVE
+  RETRY
+  TRIGGER
+  PUBLISH
+  FAIL
+}
+
+enum AuditSource {
+  APP
+  WORKER
+  SYSTEM
+}
+
+enum InboxItemKind {
+  REPLY
+  MENTION
+}
+
+enum InboxItemStatus {
+  NEW
+  HANDLED
+  IGNORED
+}
+
+enum InboxReplyStatus {
+  PENDING
+  APPROVED
+  IGNORED
+  PUBLISHED
+  FAILED
+}
+
+enum PostReplyStatus {
+  PENDING
+  PUBLISHING
+  PUBLISHED
+  FAILED
+}
+
+model AiSettings {
+  id                       String       @id @default(uuid())
+  organizationId           String       @unique
+  textProvider             AIProvider   @default(GEMINI)
+  imageProvider            AIProvider   @default(GEMINI)
+  textModel                String       @default("gemini-3.8-flash")
+  imageModel               String       @default("gemini-3.1-flash-image")
+  aiGenerationEnabled      Boolean      @default(false)
+  aiImageGenerationEnabled Boolean      @default(false)
+  textApiKey               String?
+  imageApiKey              String?
+  createdAt                DateTime     @default(now())
+  updatedAt                DateTime     @updatedAt
+  userIn                   String?
+  userUp                   String?
+  createdBy                AppUser?     @relation("AiSettingsCreatedBy", fields: [userIn], references: [id], onDelete: SetNull)
+  updatedBy                AppUser?     @relation("AiSettingsUpdatedBy", fields: [userUp], references: [id], onDelete: SetNull)
+  organization             Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("ai_settings")
+}
+
+model SchedulerSettings {
+  id              String       @id @default(uuid())
+  organizationId  String       @unique
+  enabled         Boolean      @default(false)
+  intervalMinutes Int          @default(30)
+  timezone        String       @default("Asia/Jakarta")
+  syncedAt        DateTime?
+  syncError       String?      @db.Text
+  updatedAt       DateTime     @updatedAt
+  updatedBy       String?
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("scheduler_settings")
+}
+
+model AppUser {
+  id                   String           @id @default(uuid())
+  email                String           @unique
+  name                 String?
+  image                String?
+  passwordHash         String           @db.Text
+  role                 AppRole          @default(USER)
+  permissions          Json?
+  isActive             Boolean          @default(true)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @default(now()) @updatedAt
+  userIn               String?
+  userUp               String?
+  aiSettingsCreated    AiSettings[]     @relation("AiSettingsCreatedBy")
+  aiSettingsUpdated    AiSettings[]     @relation("AiSettingsUpdatedBy")
+  usersCreated         AppUser[]        @relation("AppUserCreatedBy")
+  usersUpdated         AppUser[]        @relation("AppUserUpdatedBy")
+  productsCreated      Product[]        @relation("ProductCreatedBy")
+  productsUpdated      Product[]        @relation("ProductUpdatedBy")
+  accountsCreated      ThreadsAccount[] @relation("ThreadsAccountCreatedBy")
+  accountsUpdated      ThreadsAccount[] @relation("ThreadsAccountUpdatedBy")
+  schedulesCreated     PostSchedule[]   @relation("PostScheduleCreatedBy")
+  schedulesUpdated     PostSchedule[]   @relation("PostScheduleUpdatedBy")
+  logsCreated          PostLog[]        @relation("PostLogCreatedBy")
+  historyCreated       PostHistory[]    @relation("PostHistoryCreatedBy")
+  imagesCreated        GeneratedImage[] @relation("GeneratedImageCreatedBy")
+  imagesUpdated        GeneratedImage[] @relation("GeneratedImageUpdatedBy")
+  contentDraftsCreated ContentDraft[]   @relation("ContentDraftCreatedBy")
+  contentDraftsUpdated ContentDraft[]   @relation("ContentDraftUpdatedBy")
+  auditRecords         AuditEvent[]     @relation("AuditEventActor")
+  inboxRepliesCreated  InboxReply[]     @relation("InboxReplyCreatedBy")
+  categoriesCreated    Category[]       @relation("CategoryCreatedBy")
+  categoriesUpdated    Category[]       @relation("CategoryUpdatedBy")
+  labelsCreated        Label[]          @relation("LabelCreatedBy")
+  labelsUpdated        Label[]          @relation("LabelUpdatedBy")
+  memberships          Membership[]
+  socialAccounts       SocialAccount[]
+  subscription         UserSubscription?
+  userInRecord         AppUser?         @relation("AppUserCreatedBy", fields: [userIn], references: [id], onDelete: SetNull)
+  userUpRecord         AppUser?         @relation("AppUserUpdatedBy", fields: [userUp], references: [id], onDelete: SetNull)
+
+  @@index([role, isActive])
+  @@map("app_users")
+}
+
+model Organization {
+  id                   String                @id @default(uuid())
+  name                 String
+  slug                 String                @unique
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  memberships          Membership[]
+  accessRoles          OrganizationAccessRole[]
+  products             Product[]
+  threadsAccounts      ThreadsAccount[]
+  postSchedules        PostSchedule[]
+  postLogs             PostLog[]
+  postHistory          PostHistory[]
+  generatedImages      GeneratedImage[]
+  contentDrafts        ContentDraft[]
+  contentTopics        ContentTopic[]
+  mediaAssets          MediaAsset[]
+  auditEvents          AuditEvent[]
+  aiSettings           AiSettings?
+  schedulerSettings    SchedulerSettings?
+  inboxItems           InboxItem[]
+  inboxSyncStates      InboxSyncState[]
+  inboxReplies         InboxReply[]
+  threadsPostInsights  ThreadsPostInsight[]
+  categories           Category[]
+  labels               Label[]
+  storefronts          Storefront[]
+  affiliateClicks      AffiliateClick[]
+  storefrontEvents     StorefrontEvent[]
+  affiliateConversions AffiliateConversion[]
+  campaigns            Campaign[]
+
+  @@map("organizations")
+}
+
+model ContentTopic {
+  id             String       @id @default(uuid())
+  organizationId String
+  name           String       @db.VarChar(50)
+  normalizedName String       @db.VarChar(50)
+  usageCount     Int          @default(1)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, normalizedName])
+  @@index([organizationId, usageCount, updatedAt])
+  @@map("content_topics")
+}
+
+model Storefront {
+  id                  String                 @id @default(uuid())
+  organizationId      String
+  slug                String                 @unique
+  name                String
+  headline            String
+  description         String?                @db.Text
+  affiliateDisclosure String?                @db.Text
+  seoTitle            String?                @db.VarChar(70)
+  seoDescription      String?                @db.VarChar(180)
+  accentColor         String                 @default("#84cc16") @db.VarChar(20)
+  backgroundColor     String                 @default("#f7f8f3") @db.VarChar(20)
+  ctaLabel            String                 @default("Cek produk sekarang") @db.VarChar(60)
+  trackingToken       String                 @unique @default(uuid())
+  isPublished         Boolean                @default(false)
+  publishedSnapshot   Json?
+  publishedAt         DateTime?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  organization        Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  products            StorefrontProduct[]
+  sections            StorefrontSection[]
+  clicks              AffiliateClick[]
+  experiments         StorefrontExperiment[]
+  domains             StorefrontDomain[]
+  events              StorefrontEvent[]
+  conversions         AffiliateConversion[]
+
+  @@index([organizationId, createdAt])
+  @@map("storefronts")
+}
+
+model StorefrontSection {
+  id           String              @id @default(uuid())
+  storefrontId String
+  title        String
+  description  String?             @db.VarChar(240)
+  layout       String              @default("GRID") @db.VarChar(20)
+  sortMode     String              @default("MANUAL") @db.VarChar(20)
+  position     Int                 @default(1000)
+  isVisible    Boolean             @default(true)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  storefront   Storefront          @relation(fields: [storefrontId], references: [id], onDelete: Cascade)
+  products     StorefrontProduct[]
+
+  @@index([storefrontId, position])
+  @@map("storefront_sections")
+}
+
+model StorefrontProduct {
+  id           String            @id @default(uuid())
+  storefrontId String
+  productId    String
+  sectionId    String
+  position     Int
+  isVisible    Boolean           @default(true)
+  isFeatured   Boolean           @default(false)
+  isExcluded   Boolean           @default(false)
+  customTitle  String?           @db.VarChar(180)
+  customImage  String?           @db.Text
+  visibleFrom  DateTime?
+  visibleUntil DateTime?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  storefront   Storefront        @relation(fields: [storefrontId], references: [id], onDelete: Cascade)
+  product      Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  section      StorefrontSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  clicks       AffiliateClick[]
+
+  @@unique([storefrontId, productId])
+  @@index([storefrontId, position])
+  @@map("storefront_products")
+}
+
+model AffiliateClick {
+  id                  String                @id @default(uuid())
+  storefrontId        String
+  storefrontProductId String
+  organizationId      String
+  productId           String
+  clickedAt           DateTime              @default(now())
+  trackingId          String                @unique @default(uuid())
+  variant             String?               @db.VarChar(1)
+  storefront          Storefront            @relation(fields: [storefrontId], references: [id], onDelete: Cascade)
+  placement           StorefrontProduct     @relation(fields: [storefrontProductId], references: [id], onDelete: Cascade)
+  organization        Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  product             Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
+  conversions         AffiliateConversion[]
+
+  @@index([organizationId, clickedAt])
+  @@index([storefrontId, clickedAt])
+  @@index([storefrontProductId, clickedAt])
+  @@map("affiliate_clicks")
+}
+
+model StorefrontExperiment {
+  id           String            @id @default(uuid())
+  storefrontId String
+  name         String            @default("Eksperimen baru") @db.VarChar(80)
+  kind         String            @default("HERO") @db.VarChar(20)
+  variantA     String            @db.Text
+  variantB     String            @db.Text
+  isEnabled    Boolean           @default(false)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  storefront   Storefront        @relation(fields: [storefrontId], references: [id], onDelete: Cascade)
+  events       StorefrontEvent[]
+
+  @@index([storefrontId, isEnabled])
+  @@map("storefront_experiments")
+}
+
+model StorefrontDomain {
+  id                String     @id @default(uuid())
+  storefrontId      String
+  hostname          String     @unique @db.VarChar(253)
+  verificationToken String     @default(uuid())
+  isVerified        Boolean    @default(false)
+  verifiedAt        DateTime?
+  createdAt         DateTime   @default(now())
+  storefront        Storefront @relation(fields: [storefrontId], references: [id], onDelete: Cascade)
+
+  @@index([storefrontId])
+  @@map("storefront_domains")
+}
+
+model StorefrontEvent {
+  id             String                @id @default(uuid())
+  storefrontId   String
+  organizationId String
+  experimentId   String?
+  eventType      String                @db.VarChar(20)
+  variant        String?               @db.VarChar(1)
+  visitorId      String?               @db.VarChar(80)
+  occurredAt     DateTime              @default(now())
+  storefront     Storefront            @relation(fields: [storefrontId], references: [id], onDelete: Cascade)
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  experiment     StorefrontExperiment? @relation(fields: [experimentId], references: [id], onDelete: SetNull)
+
+  @@index([storefrontId, eventType, occurredAt])
+  @@index([experimentId, eventType, variant])
+  @@map("storefront_events")
+}
+
+model AffiliateConversion {
+  id             String         @id @default(uuid())
+  storefrontId   String
+  organizationId String
+  clickId        String         @unique
+  orderId        String?        @db.VarChar(120)
+  amount         Float?
+  currency       String         @default("IDR") @db.VarChar(3)
+  convertedAt    DateTime       @default(now())
+  storefront     Storefront     @relation(fields: [storefrontId], references: [id], onDelete: Cascade)
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  click          AffiliateClick @relation(fields: [clickId], references: [trackingId], onDelete: Cascade)
+
+  @@unique([storefrontId, orderId])
+  @@index([organizationId, convertedAt])
+  @@index([storefrontId, convertedAt])
+  @@map("affiliate_conversions")
+}
+
+model Membership {
+  id             String           @id @default(uuid())
+  organizationId String
+  userId         String
+  role           OrganizationRole @default(MEMBER)
+  accessRoleId   String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           AppUser          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessRole     OrganizationAccessRole? @relation(fields: [accessRoleId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@map("memberships")
+}
+
+model OrganizationAccessRole {
+  id             String       @id @default(uuid())
+  organizationId String
+  name           String       @db.VarChar(80)
+  permissions    Json
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memberships    Membership[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, createdAt])
+  @@map("organization_access_roles")
+}
+
+model SocialAccount {
+  id             String         @id @default(uuid())
+  userId         String
+  provider       SocialProvider
+  providerUserId String
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  user           AppUser        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+  @@map("social_accounts")
+}
+
+model UserSubscription {
+  id                      String                  @id @default(uuid())
+  userId                  String                  @unique
+  planCode                String                  @default("STARTER") @db.VarChar(24)
+  status                  UserSubscriptionStatus  @default(PENDING)
+  paymentMethod           String?                 @db.VarChar(24)
+  currentPeriodStart      DateTime?
+  currentPeriodEnd        DateTime?
+  midtransUserId          String?                 @unique @db.VarChar(64)
+  midtransSubscriptionId  String?                 @unique @db.VarChar(120)
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
+  user                    AppUser                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payments                SubscriptionPayment[]
+
+  @@index([status, currentPeriodEnd])
+  @@map("user_subscriptions")
+}
+
+model SubscriptionPayment {
+  id                    String                    @id @default(uuid())
+  subscriptionId        String
+  orderId               String                    @unique @db.VarChar(80)
+  transactionId         String?                   @unique @db.VarChar(120)
+  kind                  SubscriptionPaymentKind
+  status                SubscriptionPaymentStatus @default(PENDING)
+  paymentMethod         String?                   @db.VarChar(24)
+  planCode              String                    @db.VarChar(24)
+  amount                Int
+  paidAt                DateTime?
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
+  subscription          UserSubscription          @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId, createdAt])
+  @@index([status, createdAt])
+  @@map("subscription_payments")
+}
+
+model Product {
+  id                String                @id @default(uuid())
+  title             String
+  description       String?               @db.Text
+  affiliateLink     String
+  originalImages    String[]
+  brand             String                @default("Tanpa Merek") @db.VarChar(120)
+  price             Decimal               @default(0) @db.Decimal(14, 2)
+  originalPrice     Decimal?              @db.Decimal(14, 2)
+  currency          String                @default("IDR") @db.VarChar(3)
+  rating            Decimal?              @db.Decimal(2, 1)
+  reviewCount       Int?
+  status            ProductStatus         @default(READY)
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  userIn            String?
+  userUp            String?
+  organizationId    String
+  organization      Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy         AppUser?              @relation("ProductCreatedBy", fields: [userIn], references: [id], onDelete: SetNull)
+  updatedBy         AppUser?              @relation("ProductUpdatedBy", fields: [userUp], references: [id], onDelete: SetNull)
+  schedules         PostSchedule[]
+  logs              PostLog[]
+  generatedImages   GeneratedImage[]
+  postHistory       PostHistory[]
+  contentDrafts     ContentDraft[]
+  contentDraftLinks ContentDraftProduct[]
+  categories        ProductCategory[]
+  labels            ProductLabel[]
+  storefronts       StorefrontProduct[]
+  affiliateClicks   AffiliateClick[]
+  campaignProducts  CampaignProduct[]
+  campaignSlots     CampaignSlot[]
+
+  @@index([organizationId, createdAt])
+  @@map("products")
+}
+
+model Category {
+  id             String            @id @default(uuid())
+  organizationId String
+  name           String
+  color          String?           @db.VarChar(20)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  userIn         String?
+  userUp         String?
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy      AppUser?          @relation("CategoryCreatedBy", fields: [userIn], references: [id], onDelete: SetNull)
+  updatedBy      AppUser?          @relation("CategoryUpdatedBy", fields: [userUp], references: [id], onDelete: SetNull)
+  products       ProductCategory[]
+
+  @@unique([organizationId, name])
+  @@map("categories")
+}
+
+model Label {
+  id             String         @id @default(uuid())
+  organizationId String
+  name           String
+  color          String?        @db.VarChar(20)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  userIn         String?
+  userUp         String?
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy      AppUser?       @relation("LabelCreatedBy", fields: [userIn], references: [id], onDelete: SetNull)
+  updatedBy      AppUser?       @relation("LabelUpdatedBy", fields: [userUp], references: [id], onDelete: SetNull)
+  products       ProductLabel[]
+
+  @@unique([organizationId, name])
+  @@map("labels")
+}
+
+model ProductCategory {
+  productId  String
+  categoryId String
+  createdAt  DateTime @default(now())
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([productId, categoryId])
+  @@index([categoryId])
+  @@map("product_categories")
+}
+
+model ProductLabel {
+  productId String
+  labelId   String
+  createdAt DateTime @default(now())
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  label     Label    @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@id([productId, labelId])
+  @@index([labelId])
+  @@map("product_labels")
+}
+
+model ThreadsAccount {
+  id                    String               @id @default(uuid())
+  accountName           String
+  username              String?              @db.VarChar(100)
+  profilePictureUrl     String?              @db.Text
+  displayName           String?              @db.VarChar(255)
+  biography             String?              @db.Text
+  threadsUserId         String               @unique
+  accessToken           String               @db.Text
+  tokenExpires          DateTime
+  grantedScopes         String[]             @default([])
+  tokenRefreshLockUntil DateTime?
+  tokenInvalidAt        DateTime?
+  tokenLastError        String?              @db.Text
+  personaPrompt         String               @db.Text
+  autoReplyEnabled      Boolean              @default(false)
+  autoReplyPrompt       String               @default("") @db.Text
+  referenceImages       String[]             @default([])
+  referencePostUrls     String[]             @default([])
+  referencePostTexts    String[]             @default([])
+  tags                  String[]             @default([])
+  isActive              Boolean              @default(true)
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  userIn                String?
+  userUp                String?
+  organizationId        String
+  organization          Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy             AppUser?             @relation("ThreadsAccountCreatedBy", fields: [userIn], references: [id], onDelete: SetNull)
+  updatedBy             AppUser?             @relation("ThreadsAccountUpdatedBy", fields: [userUp], references: [id], onDelete: SetNull)
+  schedules             PostSchedule[]
+  logs                  PostLog[]
+  generatedImages       GeneratedImage[]
+  postHistory           PostHistory[]
+  contentVariants       ContentVariant[]
+  postReplies           PostReply[]
+  inboxItems            InboxItem[]
+  inboxSyncState        InboxSyncState?
+  postInsights          ThreadsPostInsight[]
+  campaignAccounts      CampaignAccount[]
+  campaignSlots         CampaignSlot[]
+
+  @@index([organizationId, isActive, accountName])
+  @@index([isActive, tokenExpires])
+  @@index([createdAt])
+  @@map("threads_accounts")
+}
+
+model InboxSyncState {
+  id             String         @id @default(uuid())
+  organizationId String
+  accountId      String         @unique
+  repliesCursor  String?
+  mentionsCursor String?
+  lastSyncedAt   DateTime?
+  lastError      String?        @db.Text
+  updatedAt      DateTime       @updatedAt
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  account        ThreadsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, updatedAt])
+  @@map("inbox_sync_states")
+}
+
+model InboxItem {
+  id             String          @id @default(uuid())
+  organizationId String
+  accountId      String
+  threadsItemId  String
+  rootPostId     String?
+  parentPostId   String?
+  kind           InboxItemKind
+  status         InboxItemStatus @default(NEW)
+  username       String
+  text           String          @db.Text
+  permalink      String?         @db.Text
+  threadsAt      DateTime
+  isOwnedByMe    Boolean         @default(false)
+  isHidden       Boolean         @default(false)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  account        ThreadsAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  replies        InboxReply[]
+
+  @@unique([accountId, threadsItemId])
+  @@index([organizationId, status, threadsAt])
+  @@index([accountId, kind, threadsAt])
+  @@map("inbox_items")
+}
+
+model InboxReply {
+  id             String           @id @default(uuid())
+  organizationId String
+  inboxItemId    String
+  text           String           @db.Text
+  status         InboxReplyStatus @default(PENDING)
+  threadsReplyId String?
+  errorMessage   String?          @db.Text
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  userIn         String?
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inboxItem      InboxItem        @relation(fields: [inboxItemId], references: [id], onDelete: Cascade)
+  createdBy      AppUser?         @relation("InboxReplyCreatedBy", fields: [userIn], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status, createdAt])
+  @@index([inboxItemId, createdAt])
+  @@map("inbox_replies")
+}
+
+model ThreadsPostInsight {
+  id             String         @id @default(uuid())
+  organizationId String
+  accountId      String
+  threadsPostId  String
+  views          Int?
+  likes          Int?
+  replies        Int?
+  reposts        Int?
+  quotes         Int?
+  lastError      String?        @db.Text
+  syncedAt       DateTime       @default(now())
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  account        ThreadsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, threadsPostId])
+  @@index([organizationId, syncedAt])
+  @@map("threads_post_insights")
+}
+
+model PostSchedule {
+  id                 String          @id @default(uuid())
+  productId          String?
+  contentVariantId   String?         @unique
+  accountId          String
+  scheduledAt        DateTime
+  status             PostStatus      @default(QUEUED)
+  draftCaption       String?         @db.Text
+  draftImageUrl      String?         @db.Text
+  draftThread        String?         @db.Text
+  publishedThreadIds String[]        @default([])
+  threadDelayMinutes Float           @default(0)
+  retryCount         Int             @default(0)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @default(now()) @updatedAt
+  userIn             String?
+  userUp             String?
+  organizationId     String
+  campaignSlotId     String?         @unique
+  organization       Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy          AppUser?        @relation("PostScheduleCreatedBy", fields: [userIn], references: [id], onDelete: SetNull)
+  updatedBy          AppUser?        @relation("PostScheduleUpdatedBy", fields: [userUp], references: [id], onDelete: SetNull)
+  product            Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+  contentVariant     ContentVariant? @relation(fields: [contentVariantId], references: [id], onDelete: SetNull)
+  account            ThreadsAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  campaignSlot       CampaignSlot?   @relation(fields: [campaignSlotId], references: [id], onDelete: SetNull)
+  logs               PostLog[]
+  history            PostHistory[]
+  replies            PostReply[]
+
+  @@index([organizationId, status, scheduledAt])
+  @@index([organizationId, scheduledAt, createdAt])
+  @@index([organizationId, accountId, scheduledAt, createdAt])
+  @@index([status, scheduledAt])
+  @@index([status, updatedAt])
+  @@index([status, createdAt])
+  @@index([productId, accountId, status])
+  @@map("post_schedules")
+}
+
+model PostReply {
+  id               String          @id @default(uuid())
+  sourceScheduleId String
+  accountId        String
+  parentReplyId    String?
+  sequence         Int
+  delayMinutes     Float           @default(1)
+  text             String          @db.VarChar(500)
+  status           PostReplyStatus @default(PENDING)
+  publishedReplyId String?
+  publishedAt      DateTime?
+  errorMessage     String?         @db.Text
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  sourceSchedule   PostSchedule    @relation(fields: [sourceScheduleId], references: [id], onDelete: Cascade)
+  account          ThreadsAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  parentReply      PostReply?      @relation("PostReplyChain", fields: [parentReplyId], references: [id], onDelete: Cascade)
+  childReplies     PostReply[]     @relation("PostReplyChain")
+
+  @@unique([sourceScheduleId, sequence])
+  @@index([sourceScheduleId, status, sequence])
+  @@index([accountId, status])
+  @@map("post_replies")
+}
+
+model Campaign {
+  id                  String            @id @default(uuid())
+  organizationId      String
+  name                String            @db.VarChar(160)
+  objective           String            @db.VarChar(40)
+  audience            String?           @db.Text
+  keyMessage          String?           @db.Text
+  targetViews         Int?
+  status              CampaignStatus    @default(DRAFT)
+  startsAt            DateTime
+  endsAt              DateTime
+  timezone            String            @default("Asia/Jakarta") @db.VarChar(64)
+  publicationWeekdays Int[]             @default([1, 2, 3, 4, 5, 6, 0])
+  publicationTimes    String[]          @default(["09:00", "13:00", "16:00"])
+  allocationSeed      String            @default(uuid())
+  allocationVersion   Int               @default(1)
+  minimumGapHours     Int               @default(24)
+  allowProductRepeats Boolean           @default(false)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  organization        Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  products            CampaignProduct[]
+  accounts            CampaignAccount[]
+  slots               CampaignSlot[]
+
+  @@index([organizationId, status, startsAt])
+  @@index([organizationId, createdAt])
+  @@map("campaigns")
+}
+
+model CampaignProduct {
+  id             String   @id @default(uuid())
+  campaignId     String
+  productId      String
+  weight         Int      @default(1)
+  maxAssignments Int?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  campaign       Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, productId])
+  @@index([productId])
+  @@map("campaign_products")
+}
+
+model CampaignAccount {
+  id              String         @id @default(uuid())
+  campaignId      String
+  accountId       String
+  maxPosts        Int            @default(1)
+  maxPostsPerDay  Int            @default(1)
+  minimumGapHours Int            @default(24)
+  isActive        Boolean        @default(true)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  campaign        Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  account         ThreadsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, accountId])
+  @@index([accountId])
+  @@map("campaign_accounts")
+}
+
+model CampaignSlot {
+  id                String             @id @default(uuid())
+  campaignId        String
+  accountId         String?
+  productId         String?
+  scheduledAt       DateTime
+  status            CampaignSlotStatus @default(EMPTY)
+  isLocked          Boolean            @default(false)
+  allocationData    Json?
+  audienceNote      String?            @db.Text
+  angle             String?            @db.Text
+  disclosure        String?            @db.VarChar(240)
+  contentValidation Json?
+  draftCaption      String?            @db.Text
+  draftThread       String?            @db.Text
+  draftImageUrl     String?            @db.Text
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  campaign          Campaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  account           ThreadsAccount?    @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  product           Product?           @relation(fields: [productId], references: [id], onDelete: SetNull)
+  postSchedule      PostSchedule?
+
+  @@index([campaignId, scheduledAt])
+  @@index([campaignId, status, scheduledAt])
+  @@index([accountId, scheduledAt])
+  @@index([productId, status])
+  @@map("campaign_slots")
+}
+
+model PostLog {
+  id                String         @id @default(uuid())
+  scheduleId        String?
+  productId         String?
+  accountId         String
+  generatedCaption  String?        @db.Text
+  generatedImageUrl String?        @db.Text
+  threadsPostId     String?
+  status            PostStatus
+  errorMessage      String?        @db.Text
+  executedAt        DateTime       @default(now())
+  deletedAt         DateTime?
+  userIn            String?
+  organizationId    String
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy         AppUser?       @relation("PostLogCreatedBy", fields: [userIn], references: [id], onDelete: SetNull)
+  schedule          PostSchedule?  @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  product           Product?       @relation(fields: [productId], references: [id], onDelete: SetNull)
+  account           ThreadsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status, executedAt])
+  @@index([organizationId, accountId, status, executedAt])
+  @@index([accountId, executedAt])
+  @@index([accountId, status, executedAt])
+  @@index([productId, status])
+  @@index([productId, accountId, status])
+  @@index([scheduleId, executedAt])
+  @@index([executedAt])
+  @@map("post_logs")
+}
+
+model PostHistory {
+  id             String          @id @default(uuid())
+  scheduleId     String?
+  productId      String?
+  accountId      String?
+  productTitle   String
+  accountName    String
+  eventType      PostHistoryType
+  message        String?         @db.Text
+  caption        String?         @db.Text
+  imageUrl       String?         @db.Text
+  scheduledAt    DateTime?
+  createdAt      DateTime        @default(now())
+  userIn         String?
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy      AppUser?        @relation("PostHistoryCreatedBy", fields: [userIn], references: [id], onDelete: SetNull)
+  schedule       PostSchedule?   @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  product        Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+  account        ThreadsAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@index([scheduleId, createdAt])
+  @@index([scheduleId, eventType])
+  @@index([organizationId, createdAt])
+  @@index([organizationId, eventType, createdAt])
+  @@index([organizationId, accountId, createdAt])
+  @@index([eventType, createdAt])
+  @@index([accountId, createdAt])
+  @@map("post_history")
+}
+
+model GeneratedImage {
+  id             String         @id @default(uuid())
+  productId      String
+  accountId      String
+  mimeType       String
+  data           Bytes          @db.ByteA
+  isCommitted    Boolean        @default(false)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @default(now()) @updatedAt
+  userIn         String?
+  userUp         String?
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy      AppUser?       @relation("GeneratedImageCreatedBy", fields: [userIn], references: [id], onDelete: SetNull)
+  updatedBy      AppUser?       @relation("GeneratedImageUpdatedBy", fields: [userUp], references: [id], onDelete: SetNull)
+  product        Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  account        ThreadsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, isCommitted, createdAt])
+  @@index([productId, accountId])
+  @@map("generated_images")
+}
+
+model ContentDraft {
+  id             String                @id @default(uuid())
+  organizationId String
+  productId      String?
+  title          String
+  topicTag       String?               @db.VarChar(50)
+  status         ContentStatus         @default(DRAFT)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  userIn         String?
+  userUp         String?
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  product        Product?              @relation(fields: [productId], references: [id], onDelete: SetNull)
+  products       ContentDraftProduct[]
+  createdBy      AppUser?              @relation("ContentDraftCreatedBy", fields: [userIn], references: [id], onDelete: SetNull)
+  updatedBy      AppUser?              @relation("ContentDraftUpdatedBy", fields: [userUp], references: [id], onDelete: SetNull)
+  variants       ContentVariant[]
+  mediaAssets    MediaAsset[]
+
+  @@index([organizationId, status, updatedAt])
+  @@index([productId])
+  @@map("content_drafts")
+}
+
+model ContentDraftProduct {
+  draftId   String
+  productId String
+  createdAt DateTime     @default(now())
+  draft     ContentDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  product   Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([draftId, productId])
+  @@index([productId, draftId])
+  @@map("content_draft_products")
+}
+
+model ContentVariant {
+  id          String         @id @default(uuid())
+  draftId     String
+  accountId   String
+  topicTag String? @db.VarChar(50)
+  caption     String         @db.Text
+  threadPosts String[]       @default([])
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  draft       ContentDraft   @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  account     ThreadsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  mediaAssets MediaAsset[]
+  schedule    PostSchedule?
+
+  @@unique([draftId, accountId])
+  @@index([accountId, updatedAt])
+  @@map("content_variants")
+}
+
+model MediaAsset {
+  id             String          @id @default(uuid())
+  organizationId String
+  draftId        String
+  variantId      String?
+  kind           MediaKind       @default(IMAGE)
+  objectKey      String
+  publicUrl      String          @db.Text
+  mimeType       String
+  sizeBytes      Int?
+  position       Int             @default(0)
+  createdAt      DateTime        @default(now())
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  draft          ContentDraft    @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  variant        ContentVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@index([draftId, position])
+  @@index([variantId, position])
+  @@map("media_assets")
+}
+
+model AuditEvent {
+  id             String         @id @default(uuid())
+  occurredAt     DateTime       @default(now())
+  actorUserId    String?
+  organizationId String
+  actorEmail     String?
+  source         AuditSource    @default(APP)
+  operation      AuditOperation
+  entity         String
+  entityId       String
+  before         Json?
+  after          Json?
+  actor          AppUser?       @relation("AuditEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([entity, entityId, occurredAt])
+  @@index([actorUserId, occurredAt])
+  @@index([organizationId, occurredAt])
+  @@map("audit_events")
+}
