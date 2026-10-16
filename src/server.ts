@@ -1,7 +1,9 @@
 ﻿import { createServer } from "node:http";
 import { db } from "../lib/db.js";
 import { handleGet, handlePost } from "./worker.js";
+import { startInboxSyncScheduler } from "./inbox-sync-scheduler.js";
 
+const stopInboxSyncScheduler = startInboxSyncScheduler();
 const port = Number(process.env.PORT || 3000);
 const server = createServer(async (incoming, outgoing) => {
   const url = new URL(incoming.url || "/", `http://${incoming.headers.host || "localhost"}`);
@@ -35,6 +37,7 @@ const server = createServer(async (incoming, outgoing) => {
 
 server.listen(port, "0.0.0.0", () => console.info(`Threadline worker listening on ${port}`));
 async function shutdown() {
+  stopInboxSyncScheduler();
   server.close(async () => { await db.$disconnect(); process.exit(0); });
   setTimeout(() => process.exit(1), 10_000).unref();
 }

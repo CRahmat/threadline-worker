@@ -1,6 +1,6 @@
-﻿import { db } from "./db.js";
+import { db } from "./db.js";
 
-export const DEFAULT_SCHEDULER = { enabled: false, intervalMinutes: 30, timezone: "Asia/Jakarta" };
+export const DEFAULT_SCHEDULER = { enabled: false, intervalSeconds: 1800, timezone: "Asia/Jakarta" };
 export const SCHEDULER_ID = "threadline-post-worker";
 
 export async function getSchedulerSettings(organizationId: string) {
@@ -12,21 +12,21 @@ export function isValidTimezone(timezone: string) {
   try { new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(); return true; } catch { return false; }
 }
 
-function zonedMinute(date: Date, timezone: string) {
-  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(date);
-  return Number(parts.find((part) => part.type === "minute")?.value);
+function zonedSecondOfDay(date: Date, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: timezone, hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).formatToParts(date);
+  return (Number(parts.find((part) => part.type === "hour")?.value) * 3600) + (Number(parts.find((part) => part.type === "minute")?.value) * 60) + Number(parts.find((part) => part.type === "second")?.value);
 }
 
-export function alignToSchedulerSlot(date: Date, intervalMinutes: number, timezone: string) {
+export function alignToSchedulerSlot(date: Date, intervalSeconds: number, timezone: string) {
   if (!Number.isFinite(date.getTime()) || !isValidTimezone(timezone)) throw new Error("Zona waktu master scheduler tidak valid.");
-  const interval = Math.max(1, Math.min(60, Math.floor(intervalMinutes)));
+  const interval = Math.max(1, Math.min(3600, Math.floor(intervalSeconds)));
   const candidate = new Date(date);
-  candidate.setUTCSeconds(0, 0);
-  if (candidate < date) candidate.setUTCMinutes(candidate.getUTCMinutes() + 1);
-  // Scanning UTC minutes handles half-hour offsets and daylight-saving transitions.
-  for (let i = 0; i <= 180; i += 1) {
-    if (zonedMinute(candidate, timezone) % interval === 0) return candidate;
-    candidate.setUTCMinutes(candidate.getUTCMinutes() + 1);
+  candidate.setUTCMilliseconds(0);
+  if (candidate < date) candidate.setUTCSeconds(candidate.getUTCSeconds() + 1);
+  // Scanning UTC seconds handles half-hour offsets and daylight-saving transitions.
+  for (let i = 0; i <= 3600; i += 1) {
+    if (zonedSecondOfDay(candidate, timezone) % interval === 0) return candidate;
+    candidate.setUTCSeconds(candidate.getUTCSeconds() + 1);
   }
   throw new Error("Tidak dapat menemukan slot publikasi pada zona waktu ini.");
 }
@@ -72,7 +72,7 @@ export async function enqueuePostWorkerContinuation(delaySeconds = 0) {
   if (!response.ok) throw new Error(await qstashError(response));
 }
 
-export async function syncQStashScheduler(input: { enabled: boolean; intervalMinutes: number }) {
+export async function syncQStashScheduler(input: { enabled: boolean; intervalSeconds: number }) {
   const token = process.env.QSTASH_TOKEN?.trim();
   const baseUrl = (process.env.WORKER_BASE_URL || process.env.PUBLIC_BASE_URL)?.trim().replace(/\/$/, "");
   const secret = process.env.CRON_SECRET?.trim();
@@ -84,7 +84,8 @@ export async function syncQStashScheduler(input: { enabled: boolean; intervalMin
   const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
   if (input.enabled) {
     const destination = `${baseUrl}/api/cron/post-worker`;
-    headers["Upstash-Cron"] = input.intervalMinutes === 60 ? "0 * * * *" : `*/${input.intervalMinutes} * * * *`;
+    const intervalMinutes = input.intervalSeconds / 60;
+    headers["Upstash-Cron"] = intervalMinutes === 60 ? "0 * * * *" : intervalMinutes === 1 ? "* * * * *" : `*/${intervalMinutes} * * * *`;
     headers["Upstash-Schedule-Id"] = SCHEDULER_ID;
     headers["Upstash-Method"] = "GET";
     headers["Upstash-Forward-Authorization"] = `Bearer ${secret}`;

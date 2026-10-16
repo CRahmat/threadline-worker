@@ -184,7 +184,7 @@ model SchedulerSettings {
   id              String       @id @default(uuid())
   organizationId  String       @unique
   enabled         Boolean      @default(false)
-  intervalMinutes Int          @default(30)
+  intervalSeconds Int          @default(1800)
   timezone        String       @default("Asia/Jakarta")
   syncedAt        DateTime?
   syncError       String?      @db.Text
@@ -701,6 +701,15 @@ model InboxSyncState {
   @@map("inbox_sync_states")
 }
 
+model InboxSyncSetting {
+  id                  String   @id @default("global") @db.VarChar(32)
+  syncIntervalMinutes Int      @default(5)
+  lastSyncTriggeredAt DateTime?
+  lockUntil           DateTime?
+  updatedAt           DateTime @updatedAt
+
+  @@map("inbox_sync_settings")
+}
 model InboxItem {
   id             String          @id @default(uuid())
   organizationId String
@@ -829,6 +838,7 @@ model PostReply {
 
   @@unique([sourceScheduleId, sequence])
   @@index([sourceScheduleId, status, sequence])
+  @@index([status, sourceScheduleId, sequence])
   @@index([accountId, status])
   @@map("post_replies")
 }

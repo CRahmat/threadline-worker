@@ -24,21 +24,23 @@ async function refreshExpiringAccountTokens() {
   const leaseUntil = new Date(now.getTime() + 60_000);
   const expiredLease = { OR: [{ tokenRefreshLockUntil: null }, { tokenRefreshLockUntil: { lt: now } }] };
   const accounts = await db.threadsAccount.findMany({ where: { isActive: true, tokenExpires: { lte: refreshBefore }, ...expiredLease }, select: { id: true, accessToken: true, tokenExpires: true }, orderBy: { tokenExpires: "asc" }, take: BATCH_SIZE });
-  let refreshed = 0;
-  for (const account of accounts) {
+  const claimedAccounts = (await Promise.all(accounts.map(async (account) => {
     const claimed = await db.threadsAccount.updateMany({ where: { id: account.id, isActive: true, tokenExpires: account.tokenExpires, ...expiredLease }, data: { tokenRefreshLockUntil: leaseUntil } });
-    if (!claimed.count) continue;
+    return claimed.count ? account : null;
+  }))).filter((account): account is (typeof accounts)[number] => account !== null);
+  const outcomes = await Promise.all(claimedAccounts.map(async (account) => {
     try {
       const result = await refreshThreadsLongLivedToken(decryptThreadsToken(account.accessToken));
       const saved = await db.threadsAccount.updateMany({ where: { id: account.id, tokenExpires: account.tokenExpires, tokenRefreshLockUntil: leaseUntil }, data: { accessToken: encryptThreadsToken(result.accessToken), tokenExpires: result.expiresAt, tokenRefreshLockUntil: null } });
-      if (saved.count) refreshed += 1;
+      return saved.count ? 1 : 0;
     } catch (error) {
       console.warn("Threads token refresh failed", { accountId: account.id, error: error instanceof Error ? error.message : "Unknown refresh error" });
       const retryAfter = new Date(Date.now() + 6 * 60 * 60_000);
       await db.threadsAccount.updateMany({ where: { id: account.id, tokenRefreshLockUntil: leaseUntil }, data: { tokenRefreshLockUntil: retryAfter } });
+      return 0;
     }
-  }
-  return refreshed;
+  }));
+  return outcomes.reduce<number>((total, outcome) => total + outcome, 0);
 }
 
 async function runWorker(request: Request, scheduleId?: string) {
@@ -47,13 +49,13 @@ async function runWorker(request: Request, scheduleId?: string) {
   const authorization = request.headers.get("authorization");
   const hasAppSecret = Boolean(secret && Buffer.byteLength(secret) >= 32 && authorization === `Bearer ${secret}`);
   if (!hasAppSecret) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  await db.generatedImage.deleteMany({ where: { isCommitted: false, createdAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } } });
-  const tokensRefreshed = await refreshExpiringAccountTokens();
+  if (!scheduleId) await db.generatedImage.deleteMany({ where: { isCommitted: false, createdAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } } });
+  const tokensRefreshed = scheduleId ? 0 : await refreshExpiringAccountTokens();
   const recovered = 0;
   // A worker can disappear after Threads accepts a request. Do not retry these jobs:
   // leave an explicit failure record for an operator to reconcile against Threads first.
   const stuckBefore = new Date(Date.now() - STUCK_PROCESSING_MS);
-  const stuckSchedules = await db.postSchedule.findMany({ where: { status: { in: ["GENERATING_AI", "PUBLISHING"] }, updatedAt: { lt: stuckBefore } }, take: BATCH_SIZE, orderBy: { updatedAt: "asc" }, include: { product: { select: { title: true } }, account: { select: { accountName: true } } } });
+  const stuckSchedules = scheduleId ? [] : await db.postSchedule.findMany({ where: { status: { in: ["GENERATING_AI", "PUBLISHING"] }, updatedAt: { lt: stuckBefore } }, take: BATCH_SIZE, orderBy: { updatedAt: "asc" }, select: { id: true, status: true, campaignSlotId: true, organizationId: true, productId: true, accountId: true } });
   let reconciliationsNeeded = 0;
   for (const stuck of stuckSchedules) {
     const message = `Worker lease expired while ${stuck.status === "PUBLISHING" ? "publishing" : "preparing"}. Do not retry automatically; reconcile the post in Threads before a manual retry.`;
@@ -68,15 +70,15 @@ async function runWorker(request: Request, scheduleId?: string) {
     reconciliationsNeeded += result;
   }
   if (scheduleId) {
-    const claim = await db.postSchedule.updateMany({ where: { id: scheduleId, status: "QUEUED" }, data: { scheduledAt: new Date(), userUp: null } });
+    const claim = await db.postSchedule.updateMany({ where: { id: scheduleId, status: "QUEUED", OR: [{ campaignSlotId: null }, { campaignSlot: { campaign: { status: { in: ["SCHEDULED", "ACTIVE"] } } } }] }, data: { status: "GENERATING_AI", userUp: null } });
     if (!claim.count) return Response.json({ error: "Only approved queued posts can be triggered." }, { status: 409 });
   }
   const now = new Date();
-  const candidates = await db.postSchedule.findMany({ where: { ...(scheduleId ? { id: scheduleId } : {}), status: "QUEUED", scheduledAt: { lte: now }, OR: [{ campaignSlotId: null }, { campaignSlot: { campaign: { status: { in: ["SCHEDULED", "ACTIVE"] } } } }] }, orderBy: { scheduledAt: "asc" }, take: scheduleId ? 1 : BATCH_SIZE, include: { product: true, account: true, contentVariant: { include: { draft: { select: { topicTag: true } } } }, campaignSlot: { include: { campaign: { select: { id: true, status: true } } } } } });
+  const candidates = await db.postSchedule.findMany({ where: { ...(scheduleId ? { id: scheduleId, status: "GENERATING_AI" } : { status: "QUEUED", scheduledAt: { lte: now } }), OR: [{ campaignSlotId: null }, { campaignSlot: { campaign: { status: { in: ["SCHEDULED", "ACTIVE"] } } } }] }, orderBy: { scheduledAt: "asc" }, take: scheduleId ? 1 : BATCH_SIZE, select: { id: true, organizationId: true, productId: true, accountId: true, campaignSlotId: true, draftCaption: true, draftThread: true, draftImageUrl: true, publishedThreadIds: true, threadDelayMinutes: true, retryCount: true, product: { select: { title: true, originalImages: true } }, account: { select: { id: true, accountName: true, threadsUserId: true, isActive: true } }, contentVariant: { select: { topicTag: true, draft: { select: { topicTag: true } } } }, campaignSlot: { select: { campaign: { select: { id: true, status: true } } } } } });
   const results: Array<{ scheduleId: string; status: "SUCCESS" | "FAILED" | "RETRYING" | "SCHEDULED"; error?: string; nextAttemptAt?: string }> = [];
   for (const candidate of candidates) {
-    if (Date.now() - startedAt >= WORKER_BUDGET_MS) break;
-    const claim = await db.postSchedule.updateMany({ where: { id: candidate.id, status: "QUEUED" }, data: { status: "GENERATING_AI", userUp: null } });
+    if (Date.now() - startedAt >= WORKER_BUDGET_MS - 5_000) break;
+    const claim = scheduleId ? { count: 1 } : await db.postSchedule.updateMany({ where: { id: candidate.id, status: "QUEUED" }, data: { status: "GENERATING_AI", userUp: null } });
     if (!claim.count) continue;
     let captions: string[] = [];
     let imageUrl: string | null = null;
@@ -141,7 +143,7 @@ async function runWorker(request: Request, scheduleId?: string) {
   }
   let repliesPublished = 0;
   let nextReplyAt: Date | null = null;
-  for (let depth = 0; depth < 100 && Date.now() - startedAt < WORKER_BUDGET_MS; depth += 1) {
+  if (!scheduleId) for (let depth = 0; depth < 100 && Date.now() - startedAt < WORKER_BUDGET_MS; depth += 1) {
     const pendingReplies = await db.postReply.findMany({
       where: { status: "PENDING", sourceSchedule: { status: "SUCCESS" }, OR: [{ parentReplyId: null }, { parentReply: { status: "PUBLISHED" } }] },
       include: { sourceSchedule: { select: { publishedThreadIds: true, logs: { where: { status: "SUCCESS" }, orderBy: { executedAt: "desc" }, take: 1, select: { executedAt: true } } } }, parentReply: { select: { publishedReplyId: true, publishedAt: true } }, account: { select: { id: true, threadsUserId: true, isActive: true } } },
@@ -177,16 +179,18 @@ async function runWorker(request: Request, scheduleId?: string) {
     }
     if (!processedReadyReply) break;
   }
-  const readyReplyCount = await db.postReply.count({ where: { status: "PENDING", sourceSchedule: { status: "SUCCESS" }, OR: [{ parentReplyId: null }, { parentReply: { status: "PUBLISHED" } }] } });
+  const eligibleReplyWhere = { status: "PENDING" as const, sourceSchedule: { status: "SUCCESS" as const }, OR: [{ parentReplyId: null }, { parentReply: { status: "PUBLISHED" as const } }] };
+  const pendingReplyCount = scheduleId ? 0 : await db.postReply.count({ where: eligibleReplyWhere });
+  const readyRepliesRemain = !scheduleId && repliesPublished >= 20 && Date.now() - startedAt < WORKER_BUDGET_MS - 5_000;
   let replyContinuationQueued = false;
-  if (readyReplyCount > 0) {
-    const remainingSeconds = Date.now() - startedAt >= WORKER_BUDGET_MS - 5_000 || !nextReplyAt ? 0 : Math.max(1, Math.ceil((nextReplyAt.getTime() - Date.now()) / 1000));
+  if (pendingReplyCount > 0 || nextReplyAt) {
+    const remainingSeconds = Date.now() - startedAt >= WORKER_BUDGET_MS - 5_000 ? 0 : readyRepliesRemain || !nextReplyAt ? 0 : Math.max(1, Math.ceil((nextReplyAt.getTime() - Date.now()) / 1000));
     try { await enqueuePostWorkerContinuation(remainingSeconds); replyContinuationQueued = true; }
-    catch (error) { console.error("Failed to enqueue reply continuation", { readyReplyCount, error: error instanceof Error ? error.message : "Unknown queue error" }); }
+    catch (error) { console.error("Failed to enqueue reply continuation", { pendingReplyCount, error: error instanceof Error ? error.message : "Unknown queue error" }); }
   }
   const durationMs = Date.now() - startedAt;
-  console.info("post-worker completed", { durationMs, processed: results.length, repliesPublished, readyReplies: readyReplyCount, replyContinuationQueued, recovered, reconciliationsNeeded, tokensRefreshed, budgetExhausted: durationMs >= WORKER_BUDGET_MS });
-  return Response.json({ processed: results.length, repliesPublished, readyReplies: readyReplyCount, replyContinuationQueued, recovered, reconciliationsNeeded, tokensRefreshed, durationMs, budgetExhausted: durationMs >= WORKER_BUDGET_MS, results });
+  console.info("post-worker completed", { durationMs, processed: results.length, repliesPublished, pendingReplies: pendingReplyCount, replyContinuationQueued, recovered, reconciliationsNeeded, tokensRefreshed, budgetExhausted: durationMs >= WORKER_BUDGET_MS });
+  return Response.json({ processed: results.length, repliesPublished, pendingReplies: pendingReplyCount, replyContinuationQueued, recovered, reconciliationsNeeded, tokensRefreshed, durationMs, budgetExhausted: durationMs >= WORKER_BUDGET_MS, results });
 }
 
 export async function handleGet(request: Request) {
